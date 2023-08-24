@@ -560,17 +560,21 @@ GET /hotel/_search
 `复合(compound)查询`: 复合查询可以将其它简单查询组合起来, 实现更复杂的搜索逻辑, 例如:
 - fuction score: 算分函数查询, 可以控制文档相关性算分, 控制文档排名. 例如百度竞价
 - 当我们利用match查询时, 文档结果会根据与搜索词条的关联度打分(_score), 返回结果时按照分值降序排列.
+
 ![img.png](src/main/resources/img/img_35.png)
 
 `TF(词条频率) = 词条出现次数 / 文档中词条总数`
 
 `TF-IDF算法(ES5.几版本启用)`
+
 ![img_32.png](src/main/resources/img/img_32.png)
 
 `BM25算法`
+
 ![img_1.png](src/main/resources/img/img_34.png)
 
 `TF-IDF算法和BM25算法区别`
+
 ![img.png](src/main/resources/img/img_33.png)
 
 - 案例: 给"如家"这个品牌的酒店排名靠前一些
