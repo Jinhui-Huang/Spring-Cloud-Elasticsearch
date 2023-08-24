@@ -731,3 +731,180 @@ GET /hotel/_search
 
 ```
 
+### 3. RestClient查询文档
+#### (1). 简单查询
+```java
+@SpringBootTest
+public class HotelSearchTest {
+    private final CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+
+    private final Logger logger = LoggerFactory.getLogger(HotelSearchTest.class);
+    private RestHighLevelClient client;
+
+    @Test
+    void testMatchAll() throws IOException {
+        /*1. 准备Request*/
+        SearchRequest request = new SearchRequest("hotel");
+        /*2. 组织DSL参数*/
+        request.source().query(QueryBuilders.matchAllQuery());
+        /*3. 发送请求, 得到响应结果*/
+        try {
+            SearchResponse searchResponse = client.search(request, RequestOptions.DEFAULT);
+            /*4. 解析响应结果*/
+            /*logger.info(searchResponse);*/
+            SearchHits hits = searchResponse.getHits();
+            /*4.1 查询的总条数*/
+            long total = hits.getTotalHits().value;
+            logger.info("共搜索到" + total + "条数据");
+            /*4.2 查询的结果数组*/
+            SearchHit[] searchHits = hits.getHits();
+            for (SearchHit searchHit : searchHits) {
+                /*获取文档source*/
+                String json = searchHit.getSourceAsString();
+                /*反序列化*/
+                HotelDoc hotelDoc = JSON.parseObject(json, HotelDoc.class);
+                logger.info("hotelDoc=" + hotelDoc);
+            }
+
+
+        } catch (Exception e) {
+            String msg = e.getMessage();
+            if (!msg.contains("201 Created") && !msg.contains("200 OK")) {
+                throw e;
+            }
+        }
+    }
+}
+```
+查询的基本步骤是:
+- 创建SearchRequest对象
+- 准备Request.source(), 也就是DSL.
+  - QueryBuilder来构建查询条件
+  - 传入Request.source()的query()方法
+- 发送请求, 得到结果
+- 解析结果(参考JSON结果, 从外到内, 逐层解析)
+#### (2). 全文检索查询
+全文检索的match和multi_match查询与match_all的API基本一致, 差别是查询条件, 也就是query的部分
+
+单字段查询: `request.source().query(QueryBuilders.matchQuery("all", "如家"));`
+
+多字段查询: `request.source().query(QueryBuilders.multiMatchQuery("如家", "name", "business"));`
+
+#### (3). 精确查询
+词条查询: `request.source().query(QueryBuilders.termQuery("city", "深圳"));`
+
+范围查询: `request.source().query(QueryBuilders.rangeQuery("price").gte(100).lte(150));`
+
+#### (4). 符合查询-boolean query
+布尔查询: 
+- 添加must条件
+- 添加filter条件
+
+```java
+@SpringBootTest
+public class HotelSearchTest {
+  private final CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+
+  private final Logger logger = LoggerFactory.getLogger(HotelSearchTest.class);
+  private RestHighLevelClient client;
+    @Test
+    void testBoolQuery() throws IOException {
+            /*1. 准备Request*/
+            SearchRequest request = new SearchRequest("hotel");
+            /*2. 创建布尔查询*/
+            BoolQueryBuilder boolQuery = QueryBuilders.boolQuery();
+            /*添加must条件*/
+            boolQuery.must(QueryBuilders.termQuery("city", "上海"));
+            /*添加filer条件*/
+            boolQuery.filter(QueryBuilders.rangeQuery("price").lte(250));
+            /*3. 组织DSL参数*/
+            request.source().query(boolQuery);
+            /*3. 发送请求, 得到响应结果*/
+            handleResponse(request);
+    }
+            
+}
+```
+
+### 3. RestClient排序和分页文档
+搜索的结果的排序和分页是与query同级的参数, 对应的API如下:
+```java
+@SpringBootTest
+public class HotelSearchTest {
+    private final CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+
+    private final Logger logger = LoggerFactory.getLogger(HotelSearchTest.class);
+    private RestHighLevelClient client;
+
+
+    @Test
+    void testMatchAll() throws IOException {
+        /*1. 准备Request*/
+        SearchRequest request = new SearchRequest("hotel");
+        /*2. 组织DSL参数*/
+        request.source().query(QueryBuilders.matchAllQuery());
+        /*分页*/
+        request.source().from(0).size(5);
+        /*价格排序*/
+        request.source().sort("price", SortOrder.ASC);
+        /*3. 发送请求, 得到响应结果*/
+        handleResponse(request);
+    }
+}
+```
+
+### 3. RestClient高亮文档
+高亮API包括请求DSL构建和结果解析两部分
+```java
+@SpringBootTest
+public class HotelSearchTest {
+    private final CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+
+    private final Logger logger = LoggerFactory.getLogger(HotelSearchTest.class);
+    private RestHighLevelClient client;
+
+  @Test
+  void testHighLighter() throws IOException {
+    /*1. 准备Request*/
+    SearchRequest request = new SearchRequest("hotel");
+    /*2. 组织DSL参数*/
+    request.source().query(QueryBuilders.matchQuery("all", "如家"));
+    /*高亮显示*/
+    request.source().highlighter(new HighlightBuilder().field("name").requireFieldMatch(false));
+    /*3. 发送请求, 得到响应结果*/
+    try {
+      SearchResponse searchResponse = client.search(request, RequestOptions.DEFAULT);
+      /*4. 解析响应结果*/
+      /*logger.info(searchResponse);*/
+      SearchHits hits = searchResponse.getHits();
+      /*4.1 查询的总条数*/
+      long total = hits.getTotalHits().value;
+      logger.info("共搜索到" + total + "条数据");
+      /*4.2 查询的结果数组*/
+      SearchHit[] searchHits = hits.getHits();
+      for (SearchHit searchHit : searchHits) {
+        /*获取文档source*/
+        String json = searchHit.getSourceAsString();
+        /*反序列化*/
+        HotelDoc hotelDoc = JSON.parseObject(json, HotelDoc.class);
+        Map<String,HighlightField> highlightFields = searchHit.getHighlightFields();
+        if (!CollectionUtils.isEmpty(highlightFields)) {
+          /*获取高亮字段*/
+          HighlightField highlightField = highlightFields.get("name");
+          if (highlightField != null) {
+            String name = highlightField.getFragments()[0].string();
+            hotelDoc.setName(name);
+          }
+        }
+        logger.info("hotelDoc=" + hotelDoc);
+      }
+    } catch (Exception e) {
+      String msg = e.getMessage();
+      if (!msg.contains("201 Created") && !msg.contains("200 OK")) {
+        throw e;
+      }
+    }
+  }
+}
+
+```
