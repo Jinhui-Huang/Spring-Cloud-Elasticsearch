@@ -1281,7 +1281,120 @@ request.source().query(functionScoreQuery);
 # 十二. 分布式搜索引擎高级
 
 ## 1. 数据聚合
+### (1). 聚合的种类
+聚合可以实现对文档数据的统计, 分析, 运算. 聚合常见的有三类:
+- 桶(Bucket)聚合: 用来对文档做分组
+  - TermAggregation: 按照文档字段值分组
+  - Date Histogram: 按照日期阶梯分组, 例如一周为一组, 或者一月为一组
+- 度量(Metric)聚合: 用以计算一些值, 比如: 最大值, 最小值, 平均值等 
+  - Avg: 求平均值
+  - Max: 求最大值
+  - Min:   
+  - Stats: 同时求max, min, avg, sum等
+- 管道(pipeline)聚合: 其他聚合的结果为基础做聚合
+### (2). DSL实现聚合
+#### a. Bucket聚合
+```edql
+# 聚合功能
+GET /hotel/_search
+{
+  "size": 0,
+  "aggs": {
+    "brandAgg": {
+      "terms": {
+        "field": "brand",
+        "size": 20,
+      }
+    }
+  }
+}
+```
+默认情况下， Bucket聚Bucket内的文档数量， 记为_count, 并且按照_count降序排序, 也可以自定义排序规则
+```edql
+# 聚合功能
+GET /hotel/_search
+{
+  "size": 0,
+  "aggs": {
+    "brandAgg": {
+      "terms": {
+        "field": "brand",
+        "size": 20,
+        "order": {
+          "_count": "asc"
+        }
+      }
+    }
+  }
+}
+```
+默认情况下, Bucket聚合是对索引库的所有文档做聚合, 我们可以限定要聚合的文档范围, 只要添加query条件即可:
+```edql
+# 聚合功能
+GET /hotel/_search
+{
+  "query": {
+    "range":{
+      "price":{
+        "lte": 200,
+      }
+    }
+  },
+  "size": 0,
+  "aggs": { # 聚合名称
+    "brandAgg": { #聚合类型
+      "terms": {
+        "field": "brand",
+        "size": 20,
+        "order": {
+          "_count": "asc"
+        }
+      }
+    }
+  }
+}
+```
+- aggs代表聚合, 与query同级, 此时query的作用是限定聚合的文档范围
+- 聚合必须的三要素
+  - 聚合名称
+  - 聚合类型
+  - 聚合字段
+- 聚合可配置属性有:
+  - size: 指定聚合结果数量
+  - order: 指定聚合结果排序
+  - field: 指定聚合字段
 
+#### b. DSL实现Metrics聚合
+获取每个品牌的用户评分的min, max, avg等值, 并按评分的平均值降序排序
+```edql
+# 嵌套聚合metric
+GET /hotel/_search
+{
+  "size": 0,
+  "aggs": {
+    "brandAgg": {
+      "terms": {
+        "field": "brand",
+        "size": 20,
+        "order": {
+          "scoreAgg.avg": "desc"
+        }
+      },
+      "aggs": { 
+        "scoreAgg": { # 聚合名称
+          "stats": { # 聚合类型
+            "field": "score" # 聚合字段
+          }
+        }
+      }
+    }
+  }
+}
+```
+### (3). RestAPI实现聚合
+![img_38.png](src/main/resources/img/img_38.png)
+
+![img_39.png](src/main/resources/img/img_39.png)
 ## 2. 自动补全
 
 ## 3. 数据同步

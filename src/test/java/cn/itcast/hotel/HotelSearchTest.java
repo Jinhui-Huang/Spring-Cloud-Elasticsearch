@@ -4,6 +4,7 @@ import cn.itcast.hotel.pojo.HotelDoc;
 import com.alibaba.fastjson.JSON;
 import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.search.SearchHit;
+import org.elasticsearch.search.aggregations.AggregationBuilders;
 import org.elasticsearch.search.fetch.subphase.highlight.HighlightBuilder;import org.elasticsearch.search.fetch.subphase.highlight.HighlightField;import org.elasticsearch.search.sort.SortOrder;import org.slf4j.LoggerFactory;
 import org.slf4j.Logger;
 import org.apache.http.HttpHost;
@@ -201,6 +202,33 @@ public class HotelSearchTest {
                 HotelDoc hotelDoc = JSON.parseObject(json, HotelDoc.class);
                 logger.info("hotelDoc=" + hotelDoc);
             }
+        } catch (Exception e) {
+            String msg = e.getMessage();
+            if (!msg.contains("201 Created") && !msg.contains("200 OK")) {
+                throw e;
+            }
+        }
+    }
+
+    @Test
+    void testAggregation() throws IOException {
+        /*1. 准备Request*/
+        SearchRequest request = new SearchRequest("hotel");
+        /*2. 准备DSL*/
+        /*2. 1设置size*/
+        request.source().size(0);
+        /*2. 2聚合*/
+        request.source().aggregation(AggregationBuilders
+                .terms("brandAgg")
+                .field("brand")
+                .size(10));
+        try {
+            /*3. 发出请求*/
+            SearchResponse response = client.search(request, RequestOptions.DEFAULT);
+            /*4. 解析结果*/
+            System.out.println(response);
+
+
         } catch (Exception e) {
             String msg = e.getMessage();
             if (!msg.contains("201 Created") && !msg.contains("200 OK")) {

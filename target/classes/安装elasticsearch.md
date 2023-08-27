@@ -40,7 +40,7 @@ docker load -i es.tar
 ```sh
 docker run -d \
 	--name es \
-    -e "ES_JAVA_OPTS=-Xms700m -Xmx700m" \
+    -e "ES_JAVA_OPTS=-Xms512m -Xmx512m" \
     -e "discovery.type=single-node" \
     -v es-data:/usr/share/elasticsearch/data \
     -v es-plugins:/usr/share/elasticsearch/plugins \
@@ -85,7 +85,7 @@ kibana可以给我们提供一个elasticsearch的可视化界面，便于我们�
 ```sh
 docker run -d \
 --name kibana \
--e ELASTICSEARCH_HOSTS=https://es:9200 \
+-e ELASTICSEARCH_HOSTS=http://es:9200 \
 --network=es-net \
 -p 5601:5601  \
 kibana:7.12.1
@@ -397,9 +397,11 @@ GET /_analyze
 
 # 4.部署es集群
 
-部署es集群可以直接使用docker-compose来完成，不过要求你的Linux虚拟机至少有**4G**的内存空间
+我们会在单机上利用docker容器运行多个es实例来模拟es集群。不过生产环境推荐大家每一台服务节点仅部署一个es的实例。
 
+部署es集群可以直接使用docker-compose来完成，但这要求你的Linux虚拟机至少有**4G**的内存空间
 
+## 4.1.创建es集群
 
 首先编写一个docker-compose文件，内容如下：
 
@@ -407,19 +409,14 @@ GET /_analyze
 version: '2.2'
 services:
   es01:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.12.1
+    image: elasticsearch:7.12.1
     container_name: es01
     environment:
       - node.name=es01
       - cluster.name=es-docker-cluster
       - discovery.seed_hosts=es02,es03
       - cluster.initial_master_nodes=es01,es02,es03
-      - bootstrap.memory_lock=true
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
     volumes:
       - data01:/usr/share/elasticsearch/data
     ports:
@@ -427,42 +424,35 @@ services:
     networks:
       - elastic
   es02:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.12.1
+    image: elasticsearch:7.12.1
     container_name: es02
     environment:
       - node.name=es02
       - cluster.name=es-docker-cluster
       - discovery.seed_hosts=es01,es03
       - cluster.initial_master_nodes=es01,es02,es03
-      - bootstrap.memory_lock=true
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
     volumes:
       - data02:/usr/share/elasticsearch/data
+    ports:
+      - 9201:9200
     networks:
       - elastic
   es03:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.12.1
+    image: elasticsearch:7.12.1
     container_name: es03
     environment:
       - node.name=es03
       - cluster.name=es-docker-cluster
       - discovery.seed_hosts=es01,es02
       - cluster.initial_master_nodes=es01,es02,es03
-      - bootstrap.memory_lock=true
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
     volumes:
       - data03:/usr/share/elasticsearch/data
     networks:
       - elastic
-
+    ports:
+      - 9202:9200
 volumes:
   data01:
     driver: local
@@ -478,8 +468,124 @@ networks:
 
 
 
-Run `docker-compose` to bring up the cluster:
+
+
+es运行需要修改一些linux系统权限，修改`/etc/sysctl.conf`文件
 
 ```sh
-docker-compose up
+vi /etc/sysctl.conf
 ```
+
+添加下面的内容：
+
+```sh
+vm.max_map_count=262144
+```
+
+然后执行命令，让配置生效：
+
+```sh
+sysctl -p
+```
+
+
+
+通过docker-compose启动集群：
+
+```sh
+docker-compose up -d
+```
+
+
+
+
+
+## 4.2.集群状态监控
+
+kibana可以监控es集群，不过新版本需要依赖es的x-pack 功能，配置比较复杂。
+
+这里推荐使用cerebro来监控es集群状态，官方网址：https://github.com/lmenezes/cerebro
+
+课前资料已经提供了安装包：
+
+![image-20210602220751081](assets/image-20210602220751081.png)
+
+解压即可使用，非常方便。
+
+解压好的目录如下：
+
+![image-20210602220824668](assets/image-20210602220824668.png)
+
+进入对应的bin目录：
+
+![image-20210602220846137](assets/image-20210602220846137.png)
+
+
+
+双击其中的cerebro.bat文件即可启动服务。
+
+![image-20210602220941101](assets/image-20210602220941101.png)
+
+
+
+访问http://localhost:9000 即可进入管理界面：
+
+![image-20210602221115763](assets/image-20210602221115763.png)
+
+输入你的elasticsearch的任意节点的地址和端口，点击connect即可：
+
+
+
+![image-20210109181106866](assets/image-20210109181106866.png)
+
+绿色的条，代表集群处于绿色（健康状态）。
+
+
+
+## 4.3.创建索引库
+
+### 1）利用kibana的DevTools创建索引库
+
+在DevTools中输入指令：
+
+```json
+PUT /itcast
+{
+  "settings": {
+    "number_of_shards": 3, // 分片数量
+    "number_of_replicas": 1 // 副本数量
+  },
+  "mappings": {
+    "properties": {
+      // mapping映射定义 ...
+    }
+  }
+}
+```
+
+
+
+
+
+### 2）利用cerebro创建索引库
+
+利用cerebro还可以创建索引库：
+
+![image-20210602221409524](assets/image-20210602221409524.png)
+
+填写索引库信息：
+
+![image-20210602221520629](assets/image-20210602221520629.png)
+
+点击右下角的create按钮：
+
+![image-20210602221542745](assets/image-20210602221542745.png)
+
+
+
+## 4.4.查看分片效果
+
+回到首页，即可查看索引库分片效果：
+
+![image-20210602221914483](assets/image-20210602221914483.png)
+
