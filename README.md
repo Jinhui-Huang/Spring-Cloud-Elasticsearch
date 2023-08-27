@@ -908,3 +908,183 @@ public class HotelSearchTest {
 }
 
 ```
+
+### 4. 旅游案例
+#### (1). 酒店搜索和分页
+- 实现其中的关键字搜索功能, 实现步骤:
+  - 定义实体类, 接收前端请求
+    ```java
+    @Data
+    public class RequestParams {
+    private String key;
+    private Integer page;
+    private Integer size;
+    private String sortBy;
+    }
+    ```
+    ```java
+    @Data
+    public class PageResult {
+    private Long total;
+    private List<HotelDoc> hotels;
+    }
+    ```
+    - 定义controller接口, 接收页面请求, 调用IHotelService的search方法
+    ```java
+        @RestController
+        @RequestMapping("/hotel")
+        public class HotelController {
+          @Autowired
+            private IHotelService hotelService;
+      
+            @PostMapping("/list")
+            public PageResult search(@RequestBody RequestParams params) {
+                return hotelService.search(params);
+            }
+      
+      }
+    ```
+    - 定义IHotelService中的search方法, 利用match查询实现根据关键字搜索酒店信息
+    ```java
+        @Service
+        public class HotelService extends ServiceImpl<HotelMapper, Hotel> implements IHotelService {
+      
+          @Autowired
+            private RestHighLevelClient client;
+      
+      
+            /**
+             * Description: search 全文查询的语句
+             * @return cn.itcast.hotel.pojo.PageResult
+             * @author huian
+             * @Date 2023/8/26
+             * */
+            @Override
+            public PageResult search(RequestParams params){
+                /*1. 准备Request*/
+                SearchRequest request = new SearchRequest("hotel");
+                /*2. 组织DSL参数*/
+                /*如果关键字为空, 则没有符合条件的查询, 直接查询全部, 不然就按关键字查询*/
+                String key = params.getKey();
+                if(key == null || "".equals(key)) {
+                    request.source().query(QueryBuilders.matchAllQuery());
+                } else {
+                    /*2.1 关键字搜索*/
+                    request.source().query(QueryBuilders.matchQuery("all", key));
+                }
+                /*2.2 分页*/
+                int page = params.getPage();
+                int size = params.getSize();
+                request.source().from((page - 1) * size).size(size);
+                /*3. 发送请求, 得到响应结果*/
+                return handleResponse(request);
+            }
+      
+            private PageResult handleResponse(SearchRequest request){
+                /*3. 发送请求, 得到响应结果*/
+                try {
+                    SearchResponse searchResponse = client.search(request, RequestOptions.DEFAULT);
+                    /*4. 解析响应结果*/
+                    SearchHits hits = searchResponse.getHits();
+                    /*获取总条数*/
+                    long total = hits.getTotalHits().value;
+                    /*4.2 查询的结果数组*/
+                    SearchHit[] searchHits = hits.getHits();
+                    List<HotelDoc> hotels = new ArrayList<>();
+                    for (SearchHit searchHit : searchHits) {
+                        /*获取文档source*/
+                        String json = searchHit.getSourceAsString();
+                        /*反序列化*/
+                        HotelDoc hotelDoc = JSON.parseObject(json, HotelDoc.class);
+                        hotels.add(hotelDoc);
+                    }
+                    /*封装返回*/
+                    return new PageResult(total, hotels);
+                } catch (Exception e) {
+                    String msg = e.getMessage();
+                    if (!msg.contains("201 Created") && !msg.contains("200 OK")) {
+                        e.printStackTrace();
+                    }
+                }
+                return new PageResult();
+            }
+      }
+    ```
+#### (2). 酒店结果过滤
+添加品牌, 城市, 星级, 价格等过滤功能
+- 修改RequestParams类, 添加brand, city, starName, minPrice, maxPrice
+- 修改search方法的实现, 在关键字搜索时, 如果brand等参数存在, 对其做过滤
+```java
+@Service
+public class HotelService extends ServiceImpl<HotelMapper, Hotel> implements IHotelService {
+
+    @Autowired
+    private RestHighLevelClient client;
+
+    @Override
+    public PageResult search(RequestParams params) {
+        /*1. 准备Request*/
+        SearchRequest request = new SearchRequest("hotel");
+        /*2. 组织DSL参数*/
+        /*如果关键字为空, 则没有符合条件的查询, 直接查询全部, 不然就按关键字查询*/
+        /*构建BooleanQuery*/
+        buildBasicQuery(params, request);
+        /*2.2 分页*/
+        int page = params.getPage();
+        int size = params.getSize();
+        request.source().from((page - 1) * size).size(size);
+        /*3. 发送请求, 得到响应结果*/
+        return handleResponse(request);
+    }
+
+    private static void buildBasicQuery(RequestParams params, SearchRequest request) {
+        BoolQueryBuilder boolQuery = QueryBuilders.boolQuery();
+        /*关键字搜索*/
+        String key = params.getKey();
+        if (key == null || "".equals(key)) {
+            boolQuery.must(QueryBuilders.matchAllQuery());
+        } else {
+            /*2.1 关键字搜索*/
+            boolQuery.must(QueryBuilders.matchQuery("all", key));
+        }
+        /*条件过滤*/
+        /*城市条件*/
+        if (params.getCity() != null && !params.getCity().equals("")) {
+            boolQuery.filter(QueryBuilders.termQuery("city", params.getCity()));
+        }
+        /*品牌条件*/
+        if (params.getBrand() != null && !params.getBrand().equals("")) {
+            boolQuery.filter(QueryBuilders.termQuery("brand", params.getBrand()));
+        }
+        /*星级条件*/
+        if (params.getStartName() != null && !params.getStartName().equals("")) {
+            boolQuery.filter(QueryBuilders.termQuery("startName", params.getStartName()));
+        }
+        /*价格条件*/
+        if (params.getMinPrice() != null && params.getMaxPrice() != null) {
+            boolQuery.filter(QueryBuilders.rangeQuery("price").gte(params.getMinPrice()).lte(params.getMaxPrice()));
+        }
+        request.source().query(boolQuery);
+    }
+}
+```
+#### (3). 周边酒店
+- 前端页面点击定位后, 会将你所在的位置发送到后台:
+- 根据这个坐标, 将酒店结果按照这个点的距离升序排序返回给前端页面
+- 实现思路: 修改RequestParams参数, 接收location字段
+- 修改search方法业务逻辑, 如果location有值, 添加根据geo_distance排序的功能
+```
+/*获取排序值*/
+Object[] sortValues = searchHit.getSortValues();
+if (sortValues.length > 0) {
+    Object sortValue = sortValues[0];
+    hotelDoc.setDistance(sortValue);
+}
+```
+#### (4). 酒店竞价排名
+- 指定的酒店在搜索结果中排名置顶
+- 我们给需要置顶的酒店文档添加一个标记, 然后利用function score给带有标记的文档增加权重值 
+  1. 给HotelDoc类字段添加isAD字段, Boolean类型
+  2. 挑选几个你喜欢的酒店, 给它的文档数据添加isAD字段, 值为true
+  3. 修改search方法, 添加function score功能, 给isAD值为true的酒店增加权重
+![img_37.png](src/main/resources/img/img_37.png)
