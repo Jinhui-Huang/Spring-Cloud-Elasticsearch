@@ -16,6 +16,8 @@ import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.common.geo.GeoPoint;import org.elasticsearch.common.unit.DistanceUnit;import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.index.query.functionscore.FunctionScoreQueryBuilder;
+import org.elasticsearch.index.query.functionscore.ScoreFunctionBuilders;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
@@ -96,7 +98,23 @@ public class HotelService extends ServiceImpl<HotelMapper, Hotel> implements IHo
         if (params.getMinPrice() != null && params.getMaxPrice() != null) {
             boolQuery.filter(QueryBuilders.rangeQuery("price").gte(params.getMinPrice()).lte(params.getMaxPrice()));
         }
-        request.source().query(boolQuery);
+        /*2. 算分查询*/
+        FunctionScoreQueryBuilder functionScoreQuery =
+                QueryBuilders.functionScoreQuery(
+                        /*原始查询, 相关性算分查询*/
+                        boolQuery,
+                        /*function score的数组*/
+                        new FunctionScoreQueryBuilder.FilterFunctionBuilder[]{
+                                /*其中的一个function score元素*/
+                                new FunctionScoreQueryBuilder.FilterFunctionBuilder(
+                                        /*过滤条件*/
+                                        QueryBuilders.termQuery("isAD", true),
+                                        /*算分函数*/
+                                        ScoreFunctionBuilders.weightFactorFunction(10)
+                                )
+                        });
+
+        request.source().query(functionScoreQuery);
     }
 
     private PageResult handleResponse(SearchRequest request){
