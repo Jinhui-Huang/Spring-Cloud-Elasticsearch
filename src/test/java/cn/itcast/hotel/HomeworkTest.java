@@ -1,5 +1,6 @@
 package cn.itcast.hotel;
 
+import cn.itcast.hotel.pojo.Hotel;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -16,14 +17,8 @@ public class HomeworkTest {
 
     @Test
     void test(){
-        int i = 0, sum = 0;
-		while (i <= 10) {
-			sum += i;
-			i++;
-			if (i % 2 == 0)
-				continue;
-		}
-		System.out.println(sum);
+        String id = String.valueOf(System.currentTimeMillis()).substring(4);
+        System.out.println(Integer.parseInt(id));
 
     }
 

@@ -8,6 +8,8 @@ import cn.itcast.hotel.pojo.RequestParams;
 import cn.itcast.hotel.service.IHotelService;
 import com.alibaba.fastjson.JSON;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import org.elasticsearch.action.delete.DeleteRequest;
+import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.RequestOptions;
@@ -29,8 +31,10 @@ import org.elasticsearch.search.suggest.Suggest;
 import org.elasticsearch.search.suggest.SuggestBuilder;
 import org.elasticsearch.search.suggest.SuggestBuilders;
 import org.elasticsearch.search.suggest.completion.CompletionSuggestion;
+import org.elasticsearch.xcontent.XContentType;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -45,12 +49,13 @@ public class HotelService extends ServiceImpl<HotelMapper, Hotel> implements IHo
 
     /**
      * Description: search 全文查询的语句
+     *
      * @return cn.itcast.hotel.pojo.PageResult
      * @author huian
      * @Date 2023/8/26
-     * */
+     */
     @Override
-    public PageResult search(RequestParams params){
+    public PageResult search(RequestParams params) {
         /*1. 准备Request*/
         SearchRequest request = new SearchRequest("hotel");
         /*2. 组织DSL参数*/
@@ -76,10 +81,11 @@ public class HotelService extends ServiceImpl<HotelMapper, Hotel> implements IHo
 
     /**
      * Description: filters 聚合查询方法
-     * @return java.util.Map<java.lang.String,java.util.List<java.lang.String>>
+     *
+     * @return java.util.Map<java.lang.String, java.util.List < java.lang.String>>
      * @author huian
      * @Date 2023/8/27
-     * */
+     */
     @Override
     public Map<String, List<String>> filters(RequestParams params) {
         /*1. 准备Request*/
@@ -118,10 +124,11 @@ public class HotelService extends ServiceImpl<HotelMapper, Hotel> implements IHo
 
     /**
      * Description: getSuggestion 自动补全实现
+     *
      * @return java.util.List<java.lang.String>
      * @author jinhui-huang
      * @Date 2023/8/28
-     * */
+     */
     @Override
     public List<String> getSuggestion(String prefix) {
         /*1. 准备Request*/
@@ -159,6 +166,57 @@ public class HotelService extends ServiceImpl<HotelMapper, Hotel> implements IHo
         return new ArrayList<>();
     }
 
+    /**
+     * Description: insertById 插入文档数据
+     *
+     * @return void
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     */
+    @Override
+    public void insertById(Long id) {
+        try {
+            /*根据id查询酒店数据*/
+            Hotel hotel = getById(id);
+            /*转换为文档类型*/
+            HotelDoc hotelDoc = new HotelDoc(hotel);
+            /*1. 准备Request对象*/
+            IndexRequest request = new IndexRequest("hotel").id(hotelDoc.getId().toString());
+            /*2. 准备JSON文档*/
+            request.source(JSON.toJSONString(hotelDoc), XContentType.JSON);
+            /*3. 发送请求*/
+            client.index(request, RequestOptions.DEFAULT);
+        } catch (Exception e) {
+            String msg = e.getMessage();
+            if (!msg.contains("201 Created") && !msg.contains("200 OK")) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Description: deleteById 根据id删除文档
+     *
+     * @return void
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     */
+    @Override
+    public void deleteById(Long id) {
+        try {
+            /*1. 准备Request*/
+            DeleteRequest request = new DeleteRequest("hotel", id.toString());
+            /*3. 发送请求*/
+            client.delete(request, RequestOptions.DEFAULT);
+        } catch (Exception e) {
+            String msg = e.getMessage();
+            if (!msg.contains("201 Created") && !msg.contains("200 OK")) {
+                e.printStackTrace();
+            }
+        }
+
+    }
+
     private List<String> getAggByName(Aggregations aggregations, String aggName) {
         /*4.1 根据聚合名称获取聚合结果*/
         Terms brandTerm = aggregations.get(aggName);
@@ -194,7 +252,7 @@ public class HotelService extends ServiceImpl<HotelMapper, Hotel> implements IHo
         BoolQueryBuilder boolQuery = QueryBuilders.boolQuery();
         /*关键字搜索*/
         String key = params.getKey();
-        if(key == null || "".equals(key)) {
+        if (key == null || "".equals(key)) {
             boolQuery.must(QueryBuilders.matchAllQuery());
         } else {
             /*2.1 关键字搜索*/
@@ -236,7 +294,7 @@ public class HotelService extends ServiceImpl<HotelMapper, Hotel> implements IHo
         request.source().query(functionScoreQuery);
     }
 
-    private PageResult handleResponse(SearchRequest request){
+    private PageResult handleResponse(SearchRequest request) {
         /*3. 发送请求, 得到响应结果*/
         try {
             SearchResponse searchResponse = client.search(request, RequestOptions.DEFAULT);

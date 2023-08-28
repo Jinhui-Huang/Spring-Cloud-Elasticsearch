@@ -1866,8 +1866,207 @@ elasticsearch中的酒店数据来自于mysql数据库, 因此mysql数据库发�
 微服务上, 数据同步应该如何实现
 
 **方法一: 同步调用**
-
 ![img_45.png](src/main/resources/img/img_45.png)
 
+- 优点: 实现简单, 粗暴
+- 缺点: 业务耦合度高
 
-## 4. 集群
+**方法二: 异步通知**
+![img_46.png](src/main/resources/img/img_46.png)
+
+- 优点: 低耦合, 实现难度一般
+- 缺点: 依赖mq的可靠性
+
+**方法三: 监听binlog**
+![img_47.png](src/main/resources/img/img_47.png)
+
+- 优点: 完全解除服务间耦合
+- 缺点: 开启binlog增加数据库负担, 实现复杂度高
+
+### (1). 利用MQ实现mysql与elasticsearch数据同步
+- 步骤:
+  ![img_48.png](src/main/resources/img/img_48.png)
+
+**配置交换机和消息队列**
+```java
+public class MqConstants {
+    /**
+     * Description: 交换机
+     * @return 
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     * */
+    public final static String HOTEL_EXCHANGE = "hotel.topic";
+    
+    /**
+     * Description: 监听新增和修改的队列
+     * @return 
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     * */
+    public final static String HOTEL_INSERT_QUEUE = "hotel.insert.queue";
+    
+    /**
+     * Description: 监听删除的队列
+     * @return 
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     * */
+    public final static String HOTEL_DELETE_QUEUE = "hotel.delete.queue";
+    
+    /**
+     * Description: 新增或修改的RoutingKey
+     * @return 
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     * */
+    public final static String HOTEL_INSERT_KEY = "hotel.insert";
+
+    /**
+     * Description: 删除的RotingKey
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     * */
+    public final static String HOTEL_DELETE_KEY = "hotel.delete";
+}
+```
+
+```java
+@Configuration
+public class MqConfig {
+    /**
+     * Description: topicExchange 定义交换机
+     * @return org.springframework.amqp.core.TopicExchange
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     * */
+    @Bean
+    public TopicExchange topicExchange(){
+        return new TopicExchange(MqConstants.HOTEL_EXCHANGE, true, false);
+    }
+
+    /**
+     * Description: insertQueue 数据发生插入或者更新时通知消息的队列
+     * @return org.springframework.amqp.core.Queue
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     * */
+    @Bean
+    public Queue insertQueue(){
+        return new Queue(MqConstants.HOTEL_INSERT_QUEUE, true);
+    }
+
+    /**
+     * Description: deleteQueue 数据发生删除时通知消息的队列
+     * @return org.springframework.amqp.core.Queue
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     * */
+    @Bean
+    public Queue deleteQueue(){
+        return new Queue(MqConstants.HOTEL_DELETE_QUEUE, true);
+    }
+
+    /**
+     * Description: insertQueueBinding 绑定交换机和数据发生插入或者更新时通知消息的队列
+     * @return org.springframework.amqp.core.Binding
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     * */
+    @Bean
+    public Binding insertQueueBinding(){
+        return BindingBuilder.bind(insertQueue()).to(topicExchange()).with(MqConstants.HOTEL_INSERT_KEY);
+    }
+
+    /**
+     * Description: deleteQueueBinding 绑定交换机和数据发生删除时通知消息的队列
+     * @return org.springframework.amqp.core.Binding
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     * */
+    @Bean
+    public Binding deleteQueueBinding(){
+        return BindingBuilder.bind(deleteQueue()).to(topicExchange()).with(MqConstants.HOTEL_DELETE_KEY);
+    }
+}
+```
+**在hotel-demo中监听消息队列**
+
+```java
+@Component
+public class HotelListener {
+    @Autowired
+    private IHotelService hotelService;
+
+    /**
+     * Description: listenerHotelInsertOrUpdate 监听酒店增或改的消息队列
+     * @return void
+     * @param id 酒店id
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     * */
+    @RabbitListener(queues = MqConstants.HOTEL_INSERT_QUEUE)
+    public void listenerHotelInsertOrUpdate(Long id) {
+        hotelService.insertById(id);
+    }
+
+    /**
+     * Description: listenerHotelDelete 监听酒店删除的消息队列
+     * @return void
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     * */
+    @RabbitListener(queues = MqConstants.HOTEL_DELETE_KEY)
+    public void listenerHotelDelete(Long id) {
+        hotelService.deleteById(id);
+    }
+}
+```
+
+## 4. elasticsearch集群
+单机的elasticsearch做数据存储, 必然面临两个问题: 海量数据存储问题,
+单点故障问题               
+- 海量数据存储库问题: 将索引库从逻辑上拆分为N个分片(shared), 存储到多个节点
+- 单点故障问题: 将分片数据在不同节点备份(replica)
+
+### (1). 搭建ES集群
+
+[安装elasticsearch.md](src/main/resources/安装elasticsearch.md)
+
+### (2). ES集群的节点角色
+
+![img_49.png](src/main/resources/img/img_49.png)
+
+**ES集群的分布式查询**
+
+![img_50.png](src/main/resources/img/img_50.png)
+
+当新增文档时, 应该保存到不同分片, 保证数据均衡, 那么coordinating node如何确定数据该保存到哪个分片呢?
+
+elasticsearch会通过hash算法来计算文档应该存储到哪个分片:
+
+`shard = hash(_routing) % number_of_shards`
+
+说明: 
+- _routing默认是文档的id
+- 算法与分片数量有关, 因此索引库一旦创建, 分片数量不能修改!
+- 如果分片数量发生更改将不能再找到原先的文档的分片位置
+
+**ES集群的脑裂**
+
+默认情况下, 每个节点都是master eligible节点, 因此一旦master节点宕机, 其他候选节点
+会选举一个成为主节点. 当主节点与其他节点网络故障时, 可能发生脑裂问题(一个集群出现两个主节点)
+
+为了避免脑裂, 需要要求选票超过 (eligible节点数量 + 1) / 2 才能当选为主节点, 因此eligible节点数量最好是奇数.
+对应配置项是discovery.zen.minimum_master_nodes, 在es7.0以后, 已经成为默认配置, 因此一般不会发生脑裂问题
+
+**各个节点的职责总结:**
+- master eligible节点的作用是什么?
+  - 参与集群选主
+  - 主节点可以管理集群状态, 管理分片信息, 处理创建和删除索引库的请求
+- data节点的作用是什么?
+  - 数据的CRUD
+- coordinator节点的作用是什么?
+  - 路由请求到其他节点
+  - 合并查询到的结果, 返回给用户
+
