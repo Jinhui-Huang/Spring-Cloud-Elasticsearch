@@ -2057,7 +2057,7 @@ public class HotelListener {
 
 ![img_50.png](src/main/resources/img/img_50.png)
 
-当新增文档时, 应该保存到不同分片, 保证数据均衡, 那么coordinating node如何确定数据该保存到哪个分片呢?
+当分布式新增文档时, 应该保存到不同分片, 保证数据均衡, 那么coordinating node如何确定数据该保存到哪个分片呢?
 
 elasticsearch会通过hash算法来计算文档应该存储到哪个分片:
 
@@ -2067,6 +2067,12 @@ elasticsearch会通过hash算法来计算文档应该存储到哪个分片:
 - _routing默认是文档的id
 - 算法与分片数量有关, 因此索引库一旦创建, 分片数量不能修改!
 - 如果分片数量发生更改将不能再找到原先的文档的分片位置
+
+![img_51.png](src/main/resources/img/img_51.png)
+
+elasticsearch的查询分成两个阶段:
+- scatter phase: 分散阶段, coordinating node会把请求分发到每一个分片上
+- gather phase: 聚集阶段, coordinating node汇总data node的搜索结果, 并处理为最终结果集返回给用户
 
 **ES集群的脑裂**
 
@@ -2086,3 +2092,17 @@ elasticsearch会通过hash算法来计算文档应该存储到哪个分片:
   - 路由请求到其他节点
   - 合并查询到的结果, 返回给用户
 
+### (3). ES集群的故障转移
+集群的master节点会监控集群中的节点状态, 如果发现有节点宕机, 
+会立即将宕机节点的分片数据迁移到其他节点, 确保数据安全, 这个叫做故障转移
+
+![img_52.png](src/main/resources/img/img_52.png)
+
+当es02发生宕机时
+
+![img_53.png](src/main/resources/img/img_53.png)
+
+es进行了故障转移
+![img_54.png](src/main/resources/img/img_54.png)
+
+数据也未发生丢失, 当es02恢复时, 数据也会自动迁移回去
