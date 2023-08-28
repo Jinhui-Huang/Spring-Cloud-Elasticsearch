@@ -15,10 +15,15 @@ import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.search.SearchRequest;
+import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.search.suggest.Suggest;
+import org.elasticsearch.search.suggest.SuggestBuilder;
+import org.elasticsearch.search.suggest.SuggestBuilders;
+import org.elasticsearch.search.suggest.completion.CompletionSuggestion;
 import org.elasticsearch.xcontent.XContentType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,6 +52,13 @@ public class HotelDocumentTest {
     private IHotelService hotelService;
     private RestHighLevelClient client;
 
+    /**
+     * Description: testAddDocument 添加单条文档数据
+     *
+     * @return void
+     * @author huian
+     * @Date 2023/8/28
+     */
     @Test
     void testAddDocument() throws IOException {
         /*根据id查询酒店数据*/
@@ -115,6 +127,13 @@ public class HotelDocumentTest {
         }
     }
 
+    /**
+     * Description: testBulk 批量添加文档数据
+     *
+     * @return void
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     */
     @Test
     void testBulk() throws IOException {
         /*批量查询酒店数据*/
@@ -133,6 +152,42 @@ public class HotelDocumentTest {
         /*3. 发送请求*/
         try {
             client.bulk(request, RequestOptions.DEFAULT);
+        } catch (Exception e) {
+            String msg = e.getMessage();
+            if (!msg.contains("201 Created") && !msg.contains("200 OK")) {
+                throw e;
+            }
+        }
+
+    }
+
+    @Test
+    void testSuggest() throws IOException {
+        /*1. 准备Request*/
+        SearchRequest request = new SearchRequest("hotel");
+        /*2. 准备DSL*/
+        request.source().suggest(new SuggestBuilder().addSuggestion(
+                "suggestions",
+                SuggestBuilders.completionSuggestion("suggestion")
+                        .prefix("hs")
+                        .skipDuplicates(true)
+                        .size(10)
+        ));
+        /*3. 发起请求*/
+        try {
+            SearchResponse response = client.search(request, RequestOptions.DEFAULT);
+            /*4. 解析结果*/
+            Suggest suggest = response.getSuggest();
+            /*4.1. 根据补全查询名称, 获取补全结果*/
+            CompletionSuggestion suggestion = suggest.getSuggestion("suggestions");
+            /*4.2. 获取options*/
+            List<CompletionSuggestion.Entry.Option> options = suggestion.getOptions();
+            /*4.3. 遍历*/
+            for (CompletionSuggestion.Entry.Option option : options) {
+                String string = option.getText().toString();
+                System.out.println(string);
+            }
+
         } catch (Exception e) {
             String msg = e.getMessage();
             if (!msg.contains("201 Created") && !msg.contains("200 OK")) {

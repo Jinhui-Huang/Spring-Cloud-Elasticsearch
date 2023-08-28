@@ -8,28 +8,31 @@ import cn.itcast.hotel.pojo.RequestParams;
 import cn.itcast.hotel.service.IHotelService;
 import com.alibaba.fastjson.JSON;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import org.apache.http.client.CredentialsProvider;
-import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestHighLevelClient;
-import org.elasticsearch.common.geo.GeoPoint;import org.elasticsearch.common.unit.DistanceUnit;import org.elasticsearch.index.query.BoolQueryBuilder;
+import org.elasticsearch.common.geo.GeoPoint;
+import org.elasticsearch.common.unit.DistanceUnit;
+import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.index.query.functionscore.FunctionScoreQueryBuilder;
 import org.elasticsearch.index.query.functionscore.ScoreFunctionBuilders;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
-import org.elasticsearch.search.builder.SearchSourceBuilder;
-import org.elasticsearch.search.fetch.subphase.highlight.HighlightBuilder;
-import org.elasticsearch.search.fetch.subphase.highlight.HighlightField;
-import org.elasticsearch.search.sort.SortBuilders;import org.elasticsearch.search.sort.SortOrder;import org.slf4j.LoggerFactory;
+import org.elasticsearch.search.aggregations.AggregationBuilders;
+import org.elasticsearch.search.aggregations.Aggregations;
+import org.elasticsearch.search.aggregations.bucket.terms.Terms;
+import org.elasticsearch.search.sort.SortBuilders;
+import org.elasticsearch.search.sort.SortOrder;
+import org.elasticsearch.search.suggest.Suggest;
+import org.elasticsearch.search.suggest.SuggestBuilder;
+import org.elasticsearch.search.suggest.SuggestBuilders;
+import org.elasticsearch.search.suggest.completion.CompletionSuggestion;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.util.CollectionUtils;
-
-import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -71,7 +74,123 @@ public class HotelService extends ServiceImpl<HotelMapper, Hotel> implements IHo
         return handleResponse(request);
     }
 
-    private static void buildBasicQuery(RequestParams params, SearchRequest request) {
+    /**
+     * Description: filters 聚合查询方法
+     * @return java.util.Map<java.lang.String,java.util.List<java.lang.String>>
+     * @author huian
+     * @Date 2023/8/27
+     * */
+    @Override
+    public Map<String, List<String>> filters(RequestParams params) {
+        /*1. 准备Request*/
+        SearchRequest request = new SearchRequest("hotel");
+        /*2. 准备DSL*/
+        /*2.1 准备query*/
+        buildBasicQuery(params, request);
+        /*2.2 设置size*/
+        request.source().size(0);
+        /*2.3 聚合*/
+        buidAggregation(request);
+        try {
+            /*3. 发出请求*/
+            SearchResponse response = client.search(request, RequestOptions.DEFAULT);
+            /*4. 解析结果*/
+            Map<String, List<String>> result = new HashMap<>();
+            Aggregations aggregations = response.getAggregations();
+            /*根据品牌名称, 获取品牌结果*/
+            List<String> brandList = getAggByName(aggregations, "brandAgg");
+            result.put("品牌", brandList);
+            /*根据城市名称, 获取城市结果*/
+            List<String> cityList = getAggByName(aggregations, "cityAgg");
+            result.put("城市", cityList);
+            /*根据星级名称, 获取星级结果*/
+            List<String> starList = getAggByName(aggregations, "starAgg");
+            result.put("星级", starList);
+            return result;
+        } catch (Exception e) {
+            String msg = e.getMessage();
+            if (!msg.contains("201 Created") && !msg.contains("200 OK")) {
+                e.printStackTrace();
+            }
+        }
+        return new HashMap<>();
+    }
+
+    /**
+     * Description: getSuggestion 自动补全实现
+     * @return java.util.List<java.lang.String>
+     * @author jinhui-huang
+     * @Date 2023/8/28
+     * */
+    @Override
+    public List<String> getSuggestion(String prefix) {
+        /*1. 准备Request*/
+        SearchRequest request = new SearchRequest("hotel");
+        /*2. 准备DSL*/
+        request.source().suggest(new SuggestBuilder().addSuggestion(
+                "suggestions",
+                SuggestBuilders.completionSuggestion("suggestion")
+                        .prefix(prefix)
+                        .skipDuplicates(true)
+                        .size(10)
+        ));
+        /*3. 发起请求*/
+        try {
+            SearchResponse response = client.search(request, RequestOptions.DEFAULT);
+            /*4. 解析结果*/
+            Suggest suggest = response.getSuggest();
+            /*4.1. 根据补全查询名称, 获取补全结果*/
+            CompletionSuggestion suggestion = suggest.getSuggestion("suggestions");
+            /*4.2. 获取options*/
+            List<CompletionSuggestion.Entry.Option> options = suggestion.getOptions();
+            /*4.3. 遍历*/
+            List<String> list = new ArrayList<>(options.size());
+            for (CompletionSuggestion.Entry.Option option : options) {
+                String text = option.getText().toString();
+                list.add(text);
+            }
+            return list;
+        } catch (Exception e) {
+            String msg = e.getMessage();
+            if (!msg.contains("201 Created") && !msg.contains("200 OK")) {
+                e.printStackTrace();
+            }
+        }
+        return new ArrayList<>();
+    }
+
+    private List<String> getAggByName(Aggregations aggregations, String aggName) {
+        /*4.1 根据聚合名称获取聚合结果*/
+        Terms brandTerm = aggregations.get(aggName);
+        /*4.2 获取buckets*/
+        List<? extends Terms.Bucket> buckets = brandTerm.getBuckets();
+        /*4.3 遍历buckets获取里面的字段值*/
+        List<String> brandList = new ArrayList<>();
+        for (Terms.Bucket bucket : buckets) {
+            /*4.4 获取key*/
+            String key = bucket.getKeyAsString();
+            brandList.add(key);
+        }
+        /*4.5 放入map*/
+        return brandList;
+    }
+
+    private void buidAggregation(SearchRequest request) {
+        request.source().aggregation(AggregationBuilders
+                .terms("brandAgg")
+                .field("brand")
+                .size(100));
+        request.source().aggregation(AggregationBuilders
+                .terms("cityAgg")
+                .field("city")
+                .size(100));
+        request.source().aggregation(AggregationBuilders
+                .terms("starAgg")
+                .field("starName")
+                .size(100));
+    }
+
+    private void buildBasicQuery(RequestParams params, SearchRequest request) {
         BoolQueryBuilder boolQuery = QueryBuilders.boolQuery();
         /*关键字搜索*/
         String key = params.getKey();

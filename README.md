@@ -1395,8 +1395,479 @@ GET /hotel/_search
 ![img_38.png](src/main/resources/img/img_38.png)
 
 ![img_39.png](src/main/resources/img/img_39.png)
+
+```java
+public class SearchTest {
+    @Test
+    void testAggregation() throws IOException {
+        /*1. 准备Request*/
+        SearchRequest request = new SearchRequest("hotel");
+        /*2. 准备DSL*/
+        /*2. 1设置size*/
+        request.source().size(0);
+        /*2. 2聚合*/
+        request.source().aggregation(AggregationBuilders
+                .terms("brandAgg")
+                .field("brand")
+                .size(10));
+        try {
+            /*3. 发出请求*/
+            SearchResponse response = client.search(request, RequestOptions.DEFAULT);
+            /*4. 解析结果*/
+            Aggregations aggregations = response.getAggregations();
+            /*4.1 根据聚合名称获取聚合结果*/
+            Terms brandTerm = aggregations.get("brandAgg");
+            /*4.2 获取buckets*/
+            List<? extends Terms.Bucket> buckets = brandTerm.getBuckets();
+            /*4.3 遍历buckets获取里面的字段值*/
+            for (Terms.Bucket bucket : buckets) {
+                /*4.4 获取key*/
+                String key = bucket.getKeyAsString();
+                System.out.println(key);
+            }
+
+        } catch (Exception e) {
+            String msg = e.getMessage();
+            if (!msg.contains("201 Created") && !msg.contains("200 OK")) {
+                throw e;
+            }
+        }
+    }
+}
+```
+
+### (4). 在IUserService中定义方法, 实现对品牌, 城市, 星级的聚合
+搜索页面的品牌, 城市等信息不应该是在页面写死, 而是通过聚合索引库中的酒店数据得来的
+
+```java
+public class SearchTest {
+    /**
+     * Description: filters 聚合查询方法
+     * @return java.util.Map<java.lang.String, java.util.List < java.lang.String>>
+     * @author huian
+     * @Date 2023/8/27
+     * */
+    @Override
+    public Map<String, List<String>> filters() {
+        /*1. 准备Request*/
+        SearchRequest request = new SearchRequest("hotel");
+        /*2. 准备DSL*/
+        /*2. 1设置size*/
+        request.source().size(0);
+        /*2. 2聚合*/
+        buidAggregation(request);
+
+        try {
+            /*3. 发出请求*/
+            SearchResponse response = client.search(request, RequestOptions.DEFAULT);
+            /*4. 解析结果*/
+            Map<String, List<String>> result = new HashMap<>();
+            Aggregations aggregations = response.getAggregations();
+            /*根据品牌名称, 获取品牌结果*/
+            List<String> brandList = getAggByName(aggregations, "brandAgg");
+            result.put("品牌", brandList);
+            /*根据城市名称, 获取城市结果*/
+            List<String> cityList = getAggByName(aggregations, "cityAgg");
+            result.put("城市", cityList);
+            /*根据星级名称, 获取星级结果*/
+            List<String> starList = getAggByName(aggregations, "starAgg");
+            result.put("星级", starList);
+            return result;
+        } catch (Exception e) {
+            String msg = e.getMessage();
+            if (!msg.contains("201 Created") && !msg.contains("200 OK")) {
+                e.printStackTrace();
+            }
+        }
+        return new HashMap<>();
+    }
+
+    private List<String> getAggByName(Aggregations aggregations, String aggName) {
+        /*4.1 根据聚合名称获取聚合结果*/
+        Terms brandTerm = aggregations.get(aggName);
+        /*4.2 获取buckets*/
+        List<? extends Terms.Bucket> buckets = brandTerm.getBuckets();
+        /*4.3 遍历buckets获取里面的字段值*/
+        List<String> brandList = new ArrayList<>();
+        for (Terms.Bucket bucket : buckets) {
+            /*4.4 获取key*/
+            String key = bucket.getKeyAsString();
+            brandList.add(key);
+        }
+        /*4.5 放入map*/
+        return brandList;
+    }
+
+    private void buidAggregation(SearchRequest request) {
+        request.source().aggregation(AggregationBuilders
+                .terms("brandAgg")
+                .field("brand")
+                .size(100));
+        request.source().aggregation(AggregationBuilders
+                .terms("cityAgg")
+                .field("city")
+                .size(100));
+        request.source().aggregation(AggregationBuilders
+                .terms("starAgg")
+                .field("starName")
+                .size(100));
+    }
+}
+```
+
+![img_40.png](src/main/resources/img/img_40.png)
+
+```java
+@RestController
+@RequestMapping("/hotel")
+public class HotelController {
+    @Autowired
+    private IHotelService hotelService;
+
+    @PostMapping("/list")
+    public PageResult search(@RequestBody RequestParams params) {
+        return hotelService.search(params);
+    }
+
+    @PostMapping("filters")
+    public Map<String, List<String>> getFilters(@RequestBody RequestParams params){
+        return hotelService.filters(params);
+    }
+
+}
+```
 ## 2. 自动补全
+### (1). 安装拼音分分词器`https://github.com/medcl/elasticsearch-analysis-pinyin`
+- 解压
+- 复制到elasticsearch的plugin目录
+- 重启elasticsearch
+- 测试
+
+### (2). 自定义拼音分词器
+
+![img_41.png](src/main/resources/img/img_41.png)
+
+- 可以在创建索引库的时, 通过settings来配置自定义的analyzer (分词器)
+
+- 拼音分词器适合在创建倒排索引的时候使用, 但不能在搜索的时候使用, 
+因此字段在创建的倒排索引的时候应该用my_analyzer分词器; 字段在搜索时应该使用ik_smart分词器;
+
+```edql
+# 自定义分词器
+PUT /test
+{
+  "settings": {
+    "analysis": {
+      "analyzer": {
+        "my_analyzer": {
+          "tokenizer": "ik_max_word",
+          "filter": "py"
+        }
+      },
+      "filter": {
+        "py": {
+          "type": "pinyin",
+          "keep_full_pinyin": false,
+          "keep_joined_full_pinyin": true,
+          "keep_original": true,
+          "limit_first_letter_length": 16,
+          "remove_duplicated_term": true,
+          "none_chinese_pinyin_tokenize": false
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "name": {
+        "type": "text",
+        "analyzer": "my_analyzer",
+        "search_analyzer": "ik_smart"
+      }
+    }
+  }
+}
+```
+### (3). 自动补全---completion suggester查询
+
+![img_42.png](src/main/resources/img/img_42.png)
+
+```edql
+# 自动补全的索引库
+PUT test2
+{
+  "mappings": {
+    "properties": {
+      "title":{
+        "type": "completion"
+      }
+    }
+  }
+}
+
+# 示例数据
+POST test2/_doc
+{
+  "title": [
+    "Sony",
+    "WH-1000XM3"]
+}
+POST test2/_doc
+{
+  "title": [
+    "SK-II",
+    "PITERA"]
+}
+POST test2/_doc
+{
+  "title": [
+    "Nintendo",
+    "switch"]
+}
+```
+```edql
+# 自动补全查询
+GET /test2/_search
+{
+  "suggest": {
+    "titleSuggest": {
+      "text": "w",
+      "completion": {
+        "field": "title",
+        "skip_duplicates": true,
+        "size": 10
+      }
+    }
+  }
+}
+```
+
+- 自动补全对字段的要求:
+  - 类型是completion
+  - 字段值是多词条的数组
+
+#### 实现hotel索引库的自动补全, 拼音搜索功能
+实现思路如下: 
+1. 修改hotel索引库结构, 设置自定义拼音分词器
+2. 修改索引库的name, all字段, 使用自定义分词器
+3. 索引库添加一个新字段suggestion, 类型为completion类型, 使用自定义分词器
+4. 给HotelDoc类添加suggestion字段, 内容包含brand, business
+5. 重新导入数据到hotel库
+
+修改的索引库的结构
+```edql
+PUT /hotel
+{
+  "settings": {
+    "analysis": {
+      "analyzer": {
+        "text_anlyzer": {
+          "tokenizer": "ik_max_word",
+          "filter": "py"
+        },
+        "completion_analyzer": {
+          "tokenizer": "keyword",
+          "filter": "py"
+        }
+      },
+      "filter": {
+        "py": {
+          "type": "pinyin",
+          "keep_full_pinyin": false,
+          "keep_joined_full_pinyin": true,
+          "keep_original": true,
+          "limit_first_letter_length": 16,
+          "remove_duplicated_term": true,
+          "none_chinese_pinyin_tokenize": false
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "id":{
+        "type": "keyword"
+      },
+      "name":{
+        "type": "text",
+        "analyzer": "text_anlyzer",
+        "search_analyzer": "ik_smart",
+        "copy_to": "all"
+      },
+      "address":{
+        "type": "keyword",
+        "index": false
+      },
+      "price":{
+        "type": "integer"
+      },
+      "score":{
+        "type": "integer"
+      },
+      "brand":{
+        "type": "keyword",
+        "copy_to": "all"
+      },
+      "city":{
+        "type": "keyword"
+      },
+      "starName":{
+        "type": "keyword"
+      },
+      "business":{
+        "type": "keyword",
+        "copy_to": "all"
+      },
+      "location":{
+        "type": "geo_point"
+      },
+      "pic":{
+        "type": "keyword",
+        "index": false
+      },
+      "all":{
+        "type": "text",
+        "analyzer": "text_anlyzer",
+        "search_analyzer": "ik_smart"
+      },
+      "suggestion":{
+        "type": "completion",
+        "analyzer": "completion_analyzer"
+      }
+    }
+  }
+}
+```
+
+**修改HotelDoc**:
+```java
+
+@Data
+@NoArgsConstructor
+public class HotelDoc {
+    private Long id;
+    private String name;
+    private String address;
+    private Integer price;
+    private Integer score;
+    private String brand;
+    private String city;
+    private String starName;
+    private String business;
+    private String location;
+    private String pic;
+    private Object distance;
+    private Boolean isAD;
+    private List<String> suggestion;
+
+
+    public HotelDoc(Hotel hotel) {
+        this.id = hotel.getId();
+        this.name = hotel.getName();
+        this.address = hotel.getAddress();
+        this.price = hotel.getPrice();
+        this.score = hotel.getScore();
+        this.brand = hotel.getBrand();
+        this.city = hotel.getCity();
+        this.starName = hotel.getStarName();
+        this.business = hotel.getBusiness();
+        this.location = hotel.getLatitude() + ", " + hotel.getLongitude();
+        this.pic = hotel.getPic();
+        if (this.business.contains("/")) {
+            /*business有多个值, 需要切割*/
+            String[] arr = this.business.split("/");
+            /*添加元素*/
+            this.suggestion = new ArrayList<>();
+            this.suggestion.add(this.brand);
+            Collections.addAll(this.suggestion, arr);
+        } else if (this.business.contains("、")) {
+            /*business有多个值, 需要切割*/
+            String[] arr = this.business.split("、");
+            /*添加元素*/
+            this.suggestion = new ArrayList<>();
+            this.suggestion.add(this.brand);
+            Collections.addAll(this.suggestion, arr);
+        } else {
+            this.suggestion = Arrays.asList(this.brand, this.business);
+        }
+    }
+}
+```
+
+**测试查询**:
+```edql
+GET /hotel/_search
+{
+  "suggest": {
+    "suggestion": {
+      "text": "sd",
+      "completion": {
+        "field": "suggestion",
+        "skip_duplicates": true,
+        "size": 10
+      }
+    }
+  }
+}
+```
+**RestAPI实现自动补全**
+![img_43.png](src/main/resources/img/img_43.png)
+
+![img_44.png](src/main/resources/img/img_44.png)
+
+```java
+public class SearchTest {
+    @Override
+    public List<String> getSuggestion(String prefix) {
+        /*1. 准备Request*/
+        SearchRequest request = new SearchRequest("hotel");
+        /*2. 准备DSL*/
+        request.source().suggest(new SuggestBuilder().addSuggestion(
+                "suggestions",
+                SuggestBuilders.completionSuggestion("suggestion")
+                        .prefix(prefix)
+                        .skipDuplicates(true)
+                        .size(10)
+        ));
+        /*3. 发起请求*/
+        try {
+            SearchResponse response = client.search(request, RequestOptions.DEFAULT);
+            /*4. 解析结果*/
+            Suggest suggest = response.getSuggest();
+            /*4.1. 根据补全查询名称, 获取补全结果*/
+            CompletionSuggestion suggestion = suggest.getSuggestion("suggestions");
+            /*4.2. 获取options*/
+            List<CompletionSuggestion.Entry.Option> options = suggestion.getOptions();
+            /*4.3. 遍历*/
+            List<String> list = new ArrayList<>(options.size());
+            for (CompletionSuggestion.Entry.Option option : options) {
+                String text = option.getText().toString();
+                list.add(text);
+            }
+            return list;
+        } catch (Exception e) {
+            String msg = e.getMessage();
+            if (!msg.contains("201 Created") && !msg.contains("200 OK")) {
+                e.printStackTrace();
+            }
+        }
+        return new ArrayList<>();
+    }
+}
+```
 
 ## 3. 数据同步
+**数据同步问题分析**
+
+elasticsearch中的酒店数据来自于mysql数据库, 因此mysql数据库发生改变时, elasticsearch
+也必须跟着改变, 这个就是elasticsearch与mysql之间的数据同步
+
+在微服务中, 负责就带来管理(操作mysql)的业务与负责酒店搜索(操作elasticsearch)的业务可能在两个不同的
+微服务上, 数据同步应该如何实现
+
+**方法一: 同步调用**
+
+![img_45.png](src/main/resources/img/img_45.png)
+
 
 ## 4. 集群
